@@ -1,291 +1,228 @@
 import cv2
 import numpy as np
-import matplotlib.pyplot as plt
-import tkinter as tk
-from tkinter import filedialog, messagebox
-from PIL import Image, ImageTk
 from skimage import img_as_float
 from skimage.filters import frangi
+import streamlit as st
 
-# ===================== 全局配色与样式 =====================
-BG_COLOR = "#e8f0fa"    # 窗口背景色
-BTN_BG = "#3478f5"      # 按钮背景色
-BTN_FG = "white"        # 按钮文字色
-FONT_STYLE = ("微软雅黑", 9)
-TEXT_FONT = ("微软雅黑", 11, "bold")
+# ===================== 页面初始化 =====================
+st.set_page_config(layout="wide", page_title="眼底图像处理系统")
+st.title("眼底图像处理系统")
 
-# 全局变量
-current_show_img = None
-image = None
-gray = None
+# 会话状态：保存图像数据，对应原全局变量
+if "origin_image" not in st.session_state:
+    st.session_state.origin_image = None
+if "gray_image" not in st.session_state:
+    st.session_state.gray_image = None
+if "current_image" not in st.session_state:
+    st.session_state.current_image = None
+if "current_title" not in st.session_state:
+    st.session_state.current_title = "当前图像：无"
 
-# ===================== 通用函数 =====================
-# 创建统一样式按钮
-def create_btn(parent, txt, cmd):
-    return tk.Button(
-        parent, text=txt, command=cmd,
-        bg=BTN_BG, fg=BTN_FG,
-        font=FONT_STYLE, width=12,
-        relief=tk.RAISED, bd=2
-    )
 
-# 更新图像标题文字
-def set_img_title(text):
-    img_title_label.config(text=f"当前图像：{text}")
+# ===================== 图像处理函数（算法完全复用原逻辑） =====================
+def update_display(img, title):
+    """更新当前显示的图像和标题"""
+    st.session_state.current_image = img
+    st.session_state.current_title = f"当前图像：{title}"
 
-# 图像显示函数
-def show_image(cv_img):
-    global current_show_img
-    current_show_img = cv_img.copy()
 
-    max_width = 420
-    height, width = cv_img.shape[:2]
-    if width > max_width:
-        scale = max_width / width
-        new_width = int(width * scale)
-        new_height = int(height * scale)
-        cv_img = cv2.resize(cv_img, (new_width, new_height), interpolation=cv2.INTER_AREA)
-
-    b, g, r = cv2.split(cv_img)
-    img = cv2.merge((r, g, b))
-    im = Image.fromarray(img)
-    imgtk = ImageTk.PhotoImage(image=im)
-
-    panel.config(image=imgtk)
-    panel.image = imgtk
-
-def show_image_in_window(title, img):
-    max_width = 350
-    height, width = img.shape[:2]
-    if width > max_width:
-        scale = max_width / width
-        img = cv2.resize(img, (int(width * scale), int(height * scale)), interpolation=cv2.INTER_AREA)
-
-    if len(img.shape) == 2:
-        im = Image.fromarray(img)
-    else:
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        im = Image.fromarray(img)
-
-    imgtk = ImageTk.PhotoImage(image=im)
-    win = tk.Toplevel(root)
-    win.title(title)
-    label = tk.Label(win, image=imgtk)
-    label.image = imgtk
-    label.pack()
-
-# ===================== 功能逻辑函数 =====================
-# 打开图像
-def load_image():
-    global image, gray
-    file_path = filedialog.askopenfilename(
-        filetypes=[("图像文件", "*.png;*.jpg;*.jpeg;*.tif;*.bmp")]
-    )
-    if not file_path:
-        return
-    image = cv2.imdecode(np.fromfile(file_path, dtype=np.uint8), cv2.IMREAD_COLOR)
+def load_image(uploaded_file):
+    """读取上传的图像"""
+    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+    image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
     if image is None:
-        messagebox.showerror("错误", "图片读取失败！")
+        st.error("图片读取失败！")
         return
-    show_image(image)
-    set_img_title("原始眼底图像")
+    st.session_state.origin_image = image
+    st.session_state.gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    update_display(image, "原始眼底图像")
 
-# 保存图像
-def save_image():
-    global current_show_img
-    if current_show_img is None:
-        messagebox.showinfo("提示", "当前没有可保存的图像，请先打开/处理图片！")
-        return
-    save_path = filedialog.asksaveasfilename(
-        defaultextension=".png",
-        filetypes=[
-            ("PNG 图片", "*.png"),
-            ("JPG 图片", "*.jpg;*.jpeg"),
-            ("TIF 图片", "*.tif"),
-            ("BMP 图片", "*.bmp")
-        ]
-    )
-    if not save_path:
-        return
-    cv2.imencode('.png', current_show_img)[1].tofile(save_path)
-    messagebox.showinfo("成功", "图像保存完成！")
 
-# 转灰度图
 def to_gray():
-    global gray
-    if image is None:
-        messagebox.showinfo("提示", "请先打开原图")
+    if st.session_state.origin_image is None:
+        st.info("请先上传原图")
         return
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    gray = st.session_state.gray_image
     gray_bgr = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-    show_image(gray_bgr)
-    set_img_title("灰度图像")
+    update_display(gray_bgr, "灰度图像")
 
-# 直方图均衡
+
 def histogram_equalization():
-    if gray is None:
-        messagebox.showinfo("提示", "请先转为灰度图")
+    if st.session_state.gray_image is None:
+        st.info("请先转为灰度图")
         return
-    equalized = cv2.equalizeHist(gray)
+    equalized = cv2.equalizeHist(st.session_state.gray_image)
     equalized_bgr = cv2.cvtColor(equalized, cv2.COLOR_GRAY2BGR)
-    show_image(equalized_bgr)
-    set_img_title("直方图均衡图像")
+    update_display(equalized_bgr, "直方图均衡图像")
 
-# 加亮
+
 def brighten():
-    if gray is None:
-        messagebox.showinfo("提示", "请先转为灰度图")
+    if st.session_state.gray_image is None:
+        st.info("请先转为灰度图")
         return
-    brightened = cv2.add(gray, 50)
+    brightened = cv2.add(st.session_state.gray_image, 50)
     brightened_bgr = cv2.cvtColor(brightened, cv2.COLOR_GRAY2BGR)
-    show_image(brightened_bgr)
-    set_img_title("加亮图像")
+    update_display(brightened_bgr, "加亮图像")
 
-# 变暗
+
 def darken():
-    if gray is None:
-        messagebox.showinfo("提示", "请先转为灰度图")
+    if st.session_state.gray_image is None:
+        st.info("请先转为灰度图")
         return
-    darkened = cv2.subtract(gray, 50)
+    darkened = cv2.subtract(st.session_state.gray_image, 50)
     darkened_bgr = cv2.cvtColor(darkened, cv2.COLOR_GRAY2BGR)
-    show_image(darkened_bgr)
-    set_img_title("变暗图像")
+    update_display(darkened_bgr, "变暗图像")
 
-# 对比增强
+
 def contrast_up():
-    if gray is None:
-        messagebox.showinfo("提示", "请先转为灰度图")
+    if st.session_state.gray_image is None:
+        st.info("请先转为灰度图")
         return
-    multiplied = cv2.multiply(gray, 1.5)
+    multiplied = cv2.multiply(st.session_state.gray_image, 1.5)
     multiplied = np.clip(multiplied, 0, 255).astype(np.uint8)
     multiplied_bgr = cv2.cvtColor(multiplied, cv2.COLOR_GRAY2BGR)
-    show_image(multiplied_bgr)
-    set_img_title("对比增强图像")
+    update_display(multiplied_bgr, "对比增强图像")
 
-# 对比降低
+
 def contrast_down():
-    if gray is None:
-        messagebox.showinfo("提示", "请先转为灰度图")
+    if st.session_state.gray_image is None:
+        st.info("请先转为灰度图")
         return
-    divided = cv2.divide(gray, 2)
+    divided = cv2.divide(st.session_state.gray_image, 2)
     divided_bgr = cv2.cvtColor(divided, cv2.COLOR_GRAY2BGR)
-    show_image(divided_bgr)
-    set_img_title("对比降低图像")
+    update_display(divided_bgr, "对比降低图像")
 
-# 逻辑运算
+
 def logic_ops(op):
-    if gray is None:
-        messagebox.showinfo("提示", "请先转为灰度图")
+    if st.session_state.gray_image is None:
+        st.info("请先转为灰度图")
         return
-    _, binary = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
+    _, binary = cv2.threshold(st.session_state.gray_image, 127, 255, cv2.THRESH_BINARY)
     if op == 'not':
         result = cv2.bitwise_not(binary)
         title = "逻辑非图像"
     elif op == 'and':
-        result = cv2.bitwise_and(gray, binary)
+        result = cv2.bitwise_and(st.session_state.gray_image, binary)
         title = "逻辑与图像"
     elif op == 'or':
-        result = cv2.bitwise_or(gray, binary)
+        result = cv2.bitwise_or(st.session_state.gray_image, binary)
         title = "逻辑或图像"
     else:
         result = binary
         title = "二值图像"
     result_bgr = cv2.cvtColor(result, cv2.COLOR_GRAY2BGR)
-    show_image(result_bgr)
-    set_img_title(title)
+    update_display(result_bgr, title)
 
-# 伪彩色处理
+
 def pseudo_color():
-    if gray is None:
-        messagebox.showinfo("提示", "请先转为灰度图")
+    if st.session_state.gray_image is None:
+        st.info("请先转为灰度图")
         return
-    color_map = cv2.applyColorMap(gray, cv2.COLORMAP_JET)
-    show_image(color_map)
-    set_img_title("伪彩色图像")
+    color_map = cv2.applyColorMap(st.session_state.gray_image, cv2.COLORMAP_JET)
+    update_display(color_map, "伪彩色图像")
 
-# 粗血管分割
+
 def segment_vessels():
-    if image is None:
-        messagebox.showinfo("提示", "请先打开原图")
+    if st.session_state.origin_image is None:
+        st.info("请先上传原图")
         return
-    green_channel = image[:, :, 1]
+    green_channel = st.session_state.origin_image[:, :, 1]
     blurred = cv2.GaussianBlur(green_channel, (5, 5), 0)
     edges = cv2.Canny(blurred, 30, 80)
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
     vessel_bgr = cv2.cvtColor(closed, cv2.COLOR_GRAY2BGR)
-    show_image(vessel_bgr)
-    set_img_title("粗分割血管图像")
+    update_display(vessel_bgr, "粗分割血管图像")
 
-# 细血管分割
+
 def segment_vessels_frangi():
-    global image
-    if image is None:
-        messagebox.showinfo("提示", "请先打开原图")
+    if st.session_state.origin_image is None:
+        st.info("请先上传原图")
         return
-    green = image[:, :, 1]
+    green = st.session_state.origin_image[:, :, 1]
     green_float = img_as_float(green)
     vessels = frangi(green_float)
     vessels_normalized = (vessels - vessels.min()) / (vessels.max() - vessels.min())
     vessels_gray = np.uint8(vessels_normalized * 255)
     equalized = cv2.equalizeHist(vessels_gray)
-    show_image(cv2.cvtColor(equalized, cv2.COLOR_GRAY2BGR))
-    set_img_title("精细分割血管图像")
+    update_display(cv2.cvtColor(equalized, cv2.COLOR_GRAY2BGR), "精细分割血管图像")
 
-# ===================== 主界面布局（左图 + 右按钮） =====================
-root = tk.Tk()
-root.title("眼底图像处理GUI系统")
-root.geometry("1100x720")
-root.configure(bg=BG_COLOR)
 
-# 整体左右分栏容器
-main_frame = tk.Frame(root, bg=BG_COLOR)
-main_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
+# ===================== 界面布局 =====================
+# 左侧侧边栏：所有操作按钮（对应原右侧按钮区）
+with st.sidebar:
+    st.header("操作面板")
 
-# -------- 左侧区域：图像展示区 --------
-left_frame = tk.Frame(main_frame, bg=BG_COLOR)
-left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    # 基础操作
+    st.subheader("基础操作")
+    uploaded = st.file_uploader("上传图像", type=["png", "jpg", "jpeg", "tif", "bmp"])
+    if uploaded:
+        load_image(uploaded)
 
-# 图像文字标注
-img_title_label = tk.Label(left_frame, text="当前图像：无", bg=BG_COLOR, font=TEXT_FONT)
-img_title_label.pack(pady=10)
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("转灰度图", use_container_width=True):
+            to_gray()
+    with col2:
+        if st.session_state.current_image is not None:
+            # 下载按钮
+            success, encoded_img = cv2.imencode('.png', st.session_state.current_image)
+            st.download_button(
+                label="保存图像",
+                data=encoded_img.tobytes(),
+                file_name="处理结果.png",
+                mime="image/png",
+                use_container_width=True
+            )
 
-# 图片显示面板
-panel = tk.Label(left_frame, bg="white", relief=tk.GROOVE, bd=2)
-panel.pack(pady=5)
+    # 图像增强
+    st.subheader("图像增强")
+    if st.button("直方图均衡", use_container_width=True):
+        histogram_equalization()
+    col3, col4 = st.columns(2)
+    with col3:
+        if st.button("加亮", use_container_width=True):
+            brighten()
+    with col4:
+        if st.button("变暗", use_container_width=True):
+            darken()
+    col5, col6 = st.columns(2)
+    with col5:
+        if st.button("对比增强", use_container_width=True):
+            contrast_up()
+    with col6:
+        if st.button("对比降低", use_container_width=True):
+            contrast_down()
 
-# -------- 右侧区域：所有按钮 纵向整齐排列 --------
-right_frame = tk.Frame(main_frame, bg=BG_COLOR)
-right_frame.pack(side=tk.RIGHT, padx=(20, 0), fill=tk.Y)
+    # 逻辑运算
+    st.subheader("逻辑运算")
+    col7, col8, col9 = st.columns(3)
+    with col7:
+        if st.button("非", use_container_width=True):
+            logic_ops('not')
+    with col8:
+        if st.button("与", use_container_width=True):
+            logic_ops('and')
+    with col9:
+        if st.button("或", use_container_width=True):
+            logic_ops('or')
+    if st.button("二值化", use_container_width=True):
+        logic_ops('binary')
 
-# 分组1：基础操作
-group1_label = tk.Label(right_frame, text="基础操作", bg=BG_COLOR, font=("微软雅黑", 10, "bold"))
-group1_label.pack(pady=(0, 8))
-create_btn(right_frame, "打开图像", load_image).pack(fill=tk.X, pady=3)
-create_btn(right_frame, "保存图像", save_image).pack(fill=tk.X, pady=3)
-create_btn(right_frame, "转灰度图", to_gray).pack(fill=tk.X, pady=3)
+    # 特殊处理
+    st.subheader("特殊处理")
+    if st.button("伪彩色处理", use_container_width=True):
+        pseudo_color()
+    if st.button("血管分割(粗)", use_container_width=True):
+        segment_vessels()
+    if st.button("血管分割(细)", use_container_width=True):
+        segment_vessels_frangi()
 
-# 分组2：图像增强
-group2_label = tk.Label(right_frame, text="图像增强", bg=BG_COLOR, font=("微软雅黑", 10, "bold"))
-group2_label.pack(pady=(12, 8))
-create_btn(right_frame, "直方图均衡", histogram_equalization).pack(fill=tk.X, pady=3)
-create_btn(right_frame, "加亮", brighten).pack(fill=tk.X, pady=3)
-create_btn(right_frame, "变暗", darken).pack(fill=tk.X, pady=3)
-create_btn(right_frame, "对比增强", contrast_up).pack(fill=tk.X, pady=3)
-create_btn(right_frame, "对比降低", contrast_down).pack(fill=tk.X, pady=3)
-
-# 分组3：逻辑运算
-group3_label = tk.Label(right_frame, text="逻辑运算", bg=BG_COLOR, font=("微软雅黑", 10, "bold"))
-group3_label.pack(pady=(12, 8))
-create_btn(right_frame, "逻辑非", lambda: logic_ops('not')).pack(fill=tk.X, pady=3)
-create_btn(right_frame, "逻辑与", lambda: logic_ops('and')).pack(fill=tk.X, pady=3)
-create_btn(right_frame, "逻辑或", lambda: logic_ops('or')).pack(fill=tk.X, pady=3)
-
-# 分组4：特殊处理
-group4_label = tk.Label(right_frame, text="特殊处理", bg=BG_COLOR, font=("微软雅黑", 10, "bold"))
-group4_label.pack(pady=(12, 8))
-create_btn(right_frame, "伪彩色处理", pseudo_color).pack(fill=tk.X, pady=3)
-create_btn(right_frame, "血管分割(粗)", segment_vessels).pack(fill=tk.X, pady=3)
-create_btn(right_frame, "血管分割(细)", segment_vessels_frangi).pack(fill=tk.X, pady=3)
-
-root.mainloop()
+# 主区域：图像显示（对应原左侧显示区）
+st.subheader(st.session_state.current_title)
+if st.session_state.current_image is not None:
+    # BGR转RGB用于网页显示
+    show_img = cv2.cvtColor(st.session_state.current_image, cv2.COLOR_BGR2RGB)
+    st.image(show_img, use_column_width=True)
+else:
+    st.info("请在左侧上传眼底图像开始处理")
